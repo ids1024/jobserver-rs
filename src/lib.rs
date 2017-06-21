@@ -589,7 +589,7 @@ mod imp {
                     // that sense we don't actually know if this will succeed or
                     // not!
                     //libc::pthread_kill(self.thread.as_pthread_t(), libc::SIGUSR1);
-                    match self.rx_done.recv_timeout(dur) {
+                    match self.rx_done.recv() {
                         Ok(()) |
                         Err(RecvTimeoutError::Disconnected) => {
                             done = true;
