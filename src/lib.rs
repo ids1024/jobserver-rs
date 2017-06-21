@@ -392,7 +392,7 @@ mod imp {
     use std::process::Command;
     use std::ptr;
     use std::sync::atomic::{AtomicBool, AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
-    use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+    use std::sync::mpsc::{self, Receiver};
     use std::sync::{Arc, Once, ONCE_INIT};
     use std::thread::{JoinHandle, Builder};
     use std::time::Duration;
@@ -591,11 +591,10 @@ mod imp {
                     //libc::pthread_kill(self.thread.as_pthread_t(), libc::SIGUSR1);
                     match self.rx_done.recv() {
                         Ok(()) |
-                        Err(RecvTimeoutError::Disconnected) => {
+                        Err(_) => {
                             done = true;
                             break
                         }
-                        Err(RecvTimeoutError::Timeout) => {}
                     }
                 }
             }
