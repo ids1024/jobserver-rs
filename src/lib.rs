@@ -381,7 +381,7 @@ impl Drop for HelperThread {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, target_os = "redox"))]
 mod imp {
     extern crate libc;
 
@@ -425,17 +425,19 @@ mod imp {
             let mut pipes = [0; 2];
 
             // Attempt atomically-create-with-cloexec if we can
+            /*
             if cfg!(target_os = "linux") {
                 if let Some(pipe2) = pipe2() {
                     cvt(pipe2(pipes.as_mut_ptr(), libc::O_CLOEXEC))?;
                     return Ok(Client::from_fds(pipes[0], pipes[1]))
                 }
             }
+            */
 
-            cvt(libc::pipe(pipes.as_mut_ptr()))?;
-            drop(set_cloexec(pipes[0], true));
-            drop(set_cloexec(pipes[1], true));
-            Ok(Client::from_fds(pipes[0], pipes[1]))
+            //cvt(libc::pipe(pipes.as_mut_ptr()))?;
+            //drop(set_cloexec(pipes[0], true));
+            //drop(set_cloexec(pipes[1], true));
+            Ok(Client::from_fds(pipes[0] as c_int, pipes[1] as c_int))
         }
 
         pub unsafe fn open(s: &str) -> Option<Client> {
@@ -463,8 +465,8 @@ mod imp {
             // then we'll have `MAKEFLAGS` env vars but won't actually have
             // access to the file descriptors.
             if is_pipe(read) && is_pipe(write) {
-                drop(set_cloexec(read, true));
-                drop(set_cloexec(write, true));
+                //drop(set_cloexec(read, true));
+                //drop(set_cloexec(write, true));
                 Some(Client::from_fds(read, write))
             } else {
                 None
@@ -473,8 +475,8 @@ mod imp {
 
         unsafe fn from_fds(read: c_int, write: c_int) -> Client {
             Client {
-                read: File::from_raw_fd(read),
-                write: File::from_raw_fd(write),
+                read: File::from_raw_fd(read as usize),
+                write: File::from_raw_fd(write as usize),
             }
         }
 
@@ -507,8 +509,8 @@ mod imp {
             let read = self.read.as_raw_fd();
             let write = self.write.as_raw_fd();
             cmd.before_exec(move || {
-                set_cloexec(read, false)?;
-                set_cloexec(write, false)?;
+                //set_cloexec(read, false)?;
+                //set_cloexec(write, false)?;
                 Ok(())
             });
         }
@@ -526,6 +528,7 @@ mod imp {
                         mut f: Box<FnMut(io::Result<::Acquired>) + Send>)
         -> io::Result<Helper>
     {
+        /*
         static USR1_INIT: Once = ONCE_INIT;
         let mut err = None;
         USR1_INIT.call_once(|| unsafe {
@@ -540,6 +543,7 @@ mod imp {
         if let Some(e) = err.take() {
             return Err(e)
         }
+        */
 
         let quitting = Arc::new(AtomicBool::new(false));
         let quitting2 = quitting.clone();
@@ -584,7 +588,7 @@ mod imp {
                     // return an error, but on other platforms it may not. In
                     // that sense we don't actually know if this will succeed or
                     // not!
-                    libc::pthread_kill(self.thread.as_pthread_t(), libc::SIGUSR1);
+                    //libc::pthread_kill(self.thread.as_pthread_t(), libc::SIGUSR1);
                     match self.rx_done.recv_timeout(dur) {
                         Ok(()) |
                         Err(RecvTimeoutError::Disconnected) => {
@@ -604,6 +608,7 @@ mod imp {
 
     #[allow(unused_assignments)]
     fn is_pipe(fd: c_int) -> bool {
+            /*
         unsafe {
             let mut stat = mem::zeroed();
             if libc::fstat(fd, &mut stat) == 0 {
@@ -618,9 +623,12 @@ mod imp {
                 false
             }
         }
+        */
+        false
     }
 
-    fn set_cloexec(fd: c_int, set: bool) -> io::Result<()> {
+    fn set_cloexec(fd: usize, set: bool) -> io::Result<()> {
+        /*
         unsafe {
             let previous = cvt(libc::fcntl(fd, libc::F_GETFD))?;
             let new = if set {
@@ -631,8 +639,9 @@ mod imp {
             if new != previous {
                 cvt(libc::fcntl(fd, libc::F_SETFD, new))?;
             }
-            Ok(())
         }
+        */
+            Ok(())
     }
 
     fn cvt(t: c_int) -> io::Result<c_int> {
@@ -644,6 +653,7 @@ mod imp {
     }
 
     unsafe fn pipe2() -> Option<&'static fn(*mut c_int, c_int) -> c_int> {
+        /*
         static PIPE2: AtomicUsize = ATOMIC_USIZE_INIT;
 
         if PIPE2.load(Ordering::SeqCst) == 0 {
@@ -659,13 +669,17 @@ mod imp {
         } else {
             mem::transmute(&PIPE2)
         }
+        */
+        None
     }
 
+    /*
     extern fn sigusr1_handler(_signum: c_int,
                               _info: *mut libc::siginfo_t,
                               _ptr: *mut libc::c_void) {
         // nothing to do
     }
+    */
 }
 
 #[cfg(windows)]
