@@ -385,6 +385,9 @@ impl Drop for HelperThread {
 mod imp {
     extern crate libc;
 
+    #[cfg(target_os = "redox")]
+    extern crate syscall;
+
     use std::fs::File;
     use std::io::{self, Read, Write};
     use std::mem;
@@ -435,6 +438,7 @@ mod imp {
             */
 
             //cvt(libc::pipe(pipes.as_mut_ptr()))?;
+            syscall::pipe2(&mut pipes, 0).map_err(|err| io::Error::from_raw_os_error(err.errno))?;
             //drop(set_cloexec(pipes[0], true));
             //drop(set_cloexec(pipes[1], true));
             Ok(Client::from_fds(pipes[0] as c_int, pipes[1] as c_int))
