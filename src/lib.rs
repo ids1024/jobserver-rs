@@ -468,10 +468,10 @@ mod imp {
             // If we're called from `make` *without* the leading + on our rule
             // then we'll have `MAKEFLAGS` env vars but won't actually have
             // access to the file descriptors.
-            if is_pipe(read) && is_pipe(write) {
-                //drop(set_cloexec(read, true));
-                //drop(set_cloexec(write, true));
-                Some(Client::from_fds(read, write))
+            if true {
+                drop(set_cloexec(read, true));
+                drop(set_cloexec(write, true));
+                Some(Client::from_fds(read as _, write as _))
             } else {
                 None
             }
@@ -609,9 +609,9 @@ mod imp {
         }
     }
 
+    /*
     #[allow(unused_assignments)]
     fn is_pipe(fd: c_int) -> bool {
-            /*
         unsafe {
             let mut stat = mem::zeroed();
             if libc::fstat(fd, &mut stat) == 0 {
@@ -626,24 +626,21 @@ mod imp {
                 false
             }
         }
-        */
-        false
     }
+    */
 
     fn set_cloexec(fd: usize, set: bool) -> io::Result<()> {
-        /*
         unsafe {
-            let previous = cvt(libc::fcntl(fd, libc::F_GETFD))?;
+            let previous = syscall::fcntl(fd, syscall::F_GETFL, 0).map_err(|err| io::Error::from_raw_os_error(err.errno))?;
             let new = if set {
-                previous | libc::FD_CLOEXEC
+                previous | syscall::O_CLOEXEC
             } else {
-                previous & !libc::FD_CLOEXEC
+                previous & !syscall::O_CLOEXEC
             };
             if new != previous {
-                cvt(libc::fcntl(fd, libc::F_SETFD, new))?;
+                syscall::fcntl(fd, syscall::F_SETFL, new).map_err(|err| io::Error::from_raw_os_error(err.errno))?;
             }
         }
-        */
             Ok(())
     }
 
