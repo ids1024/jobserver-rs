@@ -83,6 +83,7 @@ use std::io;
 use std::process::Command;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Sender};
+use std::os::unix::thread::JoinHandleExt;
 
 /// A client of a jobserver
 ///
@@ -532,22 +533,18 @@ mod imp {
                         mut f: Box<FnMut(io::Result<::Acquired>) + Send>)
         -> io::Result<Helper>
     {
-        /*
         static USR1_INIT: Once = ONCE_INIT;
         let mut err = None;
         USR1_INIT.call_once(|| unsafe {
-            let mut new: libc::sigaction = mem::zeroed();
-            new.sa_sigaction = sigusr1_handler as usize;
-            new.sa_flags = libc::SA_SIGINFO as _;
-            if libc::sigaction(libc::SIGUSR1, &new, ptr::null_mut()) != 0 {
-                err = Some(io::Error::last_os_error());
-            }
+            let mut new: syscall::SigAction = mem::zeroed();
+            new.sa_handler = sigusr1_handler;
+            new.sa_flags =syscall::SA_SIGINFO as _;
+            err = syscall::sigaction(syscall::SIGUSR1, Some(&new), None).map_err(|err| io::Error::from_raw_os_error(err.errno)).err();
         });
 
         if let Some(e) = err.take() {
             return Err(e)
         }
-        */
 
         let quitting = Arc::new(AtomicBool::new(false));
         let quitting2 = quitting.clone();
@@ -592,7 +589,7 @@ mod imp {
                     // return an error, but on other platforms it may not. In
                     // that sense we don't actually know if this will succeed or
                     // not!
-                    //libc::pthread_kill(self.thread.as_pthread_t(), libc::SIGUSR1);
+                    syscall::kill(self.thread.as_pthread_t(), syscall::SIGUSR1);
                     match self.rx_done.recv() {
                         Ok(()) |
                         Err(_) => {
@@ -673,13 +670,9 @@ mod imp {
         None
     }
 
-    /*
-    extern fn sigusr1_handler(_signum: c_int,
-                              _info: *mut libc::siginfo_t,
-                              _ptr: *mut libc::c_void) {
+    extern fn sigusr1_handler(_signum: usize) {
         // nothing to do
     }
-    */
 }
 
 #[cfg(windows)]
