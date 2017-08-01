@@ -721,7 +721,15 @@ mod imp {
         syscall::pipe2(fds, 0)
     }
 
+    #[cfg(target_os = "redox")]
     extern fn sigusr1_handler(_signum: usize) {
+        // nothing to do
+    }
+
+    #[cfg(not(target_os = "redox"))]
+    extern fn sigusr1_handler(_signum: c_int,
+                              _info: *mut libc::siginfo_t,
+                              _ptr: *mut libc::c_void) {
         // nothing to do
     }
 }
