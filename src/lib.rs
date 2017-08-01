@@ -439,7 +439,7 @@ mod imp {
             */
 
             //cvt(libc::pipe(pipes.as_mut_ptr()))?;
-            syscall::pipe2(&mut pipes, syscall::O_CLOEXEC).map_err(|err| io::Error::from_raw_os_error(err.errno))?;
+            cvt(syscall::pipe2(&mut pipes, syscall::O_CLOEXEC))?;
             //drop(set_cloexec(pipes[0], true));
             //drop(set_cloexec(pipes[1], true));
             Ok(Client::from_fds(pipes[0] as c_int, pipes[1] as c_int))
@@ -539,7 +539,7 @@ mod imp {
             let mut new: syscall::SigAction = mem::zeroed();
             new.sa_handler = sigusr1_handler;
             new.sa_flags =syscall::SA_SIGINFO as _;
-            err = syscall::sigaction(syscall::SIGUSR1, Some(&new), None).map_err(|err| io::Error::from_raw_os_error(err.errno)).err();
+            err = cvt(syscall::sigaction(syscall::SIGUSR1, Some(&new), None)).err();
         });
 
         if let Some(e) = err.take() {
@@ -628,19 +628,20 @@ mod imp {
 
     fn set_cloexec(fd: usize, set: bool) -> io::Result<()> {
         unsafe {
-            let previous = syscall::fcntl(fd, syscall::F_GETFL, 0).map_err(|err| io::Error::from_raw_os_error(err.errno))?;
+            let previous = cvt(syscall::fcntl(fd, syscall::F_GETFL, 0))?;
             let new = if set {
                 previous | syscall::O_CLOEXEC
             } else {
                 previous & !syscall::O_CLOEXEC
             };
             if new != previous {
-                syscall::fcntl(fd, syscall::F_SETFL, new).map_err(|err| io::Error::from_raw_os_error(err.errno))?;
+                cvt(syscall::fcntl(fd, syscall::F_SETFL, new))?;
             }
         }
             Ok(())
     }
 
+    #[cfg(not(target_os = "redox"))]
     fn cvt(t: c_int) -> io::Result<c_int> {
         if t == -1 {
             Err(io::Error::last_os_error())
@@ -648,6 +649,10 @@ mod imp {
             Ok(t)
         }
     }
+
+    #[cfg(target_os = "redox")]
+    fn cvt(t: syscall::Result<usize>) -> io::Result<c_int> {
+        t.map_err(|err| io::Error::from_raw_os_error(err.errno))
 
     unsafe fn pipe2() -> Option<&'static fn(*mut c_int, c_int) -> c_int> {
         /*
