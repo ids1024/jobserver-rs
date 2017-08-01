@@ -83,7 +83,6 @@ use std::io;
 use std::process::Command;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Sender};
-use std::os::unix::thread::JoinHandleExt;
 
 /// A client of a jobserver
 ///
@@ -389,6 +388,11 @@ mod imp {
     #[cfg(target_os = "redox")]
     extern crate syscall;
 
+    #[cfg(not(target_os = "redox"))]
+    use self::libc::{fcntl, O_CLOEXEC, F_SETFD, F_GETFD, SA_SIGINFO, sigaction, pipe};
+    #[cfg(target_os = "redox")]
+    use self::syscall::{fcntl, O_CLOEXEC, F_SETFD, F_GETFD, SA_SIGINFO, SigAction as sigaction};
+
     use std::fs::File;
     use std::io::{self, Read, Write};
     use std::mem;
@@ -429,20 +433,30 @@ mod imp {
             let mut pipes = [0; 2];
 
             // Attempt atomically-create-with-cloexec if we can
-            /*
-            if cfg!(target_os = "linux") {
+            #[cfg(target_os = "linux")]
+            {
                 if let Some(pipe2) = pipe2() {
-                    cvt(pipe2(pipes.as_mut_ptr(), libc::O_CLOEXEC))?;
-                    return Ok(Client::from_fds(pipes[0], pipes[1]))
+                    cvt(pipe2(pipes.as_mut_ptr(), O_CLOEXEC))?;
+                    return Ok(Client::from_fds(pipes[0], pipes[1]));
                 }
             }
-            */
+            #[cfg(target_os = "redox")]
+            {
+                cvt(syscall::pipe2(&mut pipes, O_CLOEXEC))?;
+                return Ok(Client::from_fds(pipes[0], pipes[1]));
+            }
 
-            //cvt(libc::pipe(pipes.as_mut_ptr()))?;
-            cvt(syscall::pipe2(&mut pipes, syscall::O_CLOEXEC))?;
-            //drop(set_cloexec(pipes[0], true));
-            //drop(set_cloexec(pipes[1], true));
-            Ok(Client::from_fds(pipes[0] as c_int, pipes[1] as c_int))
+            #[cfg(target_os = "redox")]
+            {
+                cvt(pipe(&mut pipes))?;
+            }
+            #[cfg(not(target_os = "redox"))]
+            {
+                cvt(pipe(pipes.as_mut_ptr()))?;
+            }
+            drop(set_cloexec(pipes[0], true));
+            drop(set_cloexec(pipes[1], true));
+            Ok(Client::from_fds(pipes[0], pipes[1]))
         }
 
         pub unsafe fn open(s: &str) -> Option<Client> {
@@ -472,16 +486,16 @@ mod imp {
             if true {
                 drop(set_cloexec(read, true));
                 drop(set_cloexec(write, true));
-                Some(Client::from_fds(read as _, write as _))
+                Some(Client::from_fds(read, write))
             } else {
                 None
             }
         }
 
-        unsafe fn from_fds(read: c_int, write: c_int) -> Client {
+        unsafe fn from_fds(read: RawFd, write: RawFd) -> Client {
             Client {
-                read: File::from_raw_fd(read as usize),
-                write: File::from_raw_fd(write as usize),
+                read: File::from_raw_fd(read),
+                write: File::from_raw_fd(write),
             }
         }
 
@@ -514,8 +528,8 @@ mod imp {
             let read = self.read.as_raw_fd();
             let write = self.write.as_raw_fd();
             cmd.before_exec(move || {
-                //set_cloexec(read, false)?;
-                //set_cloexec(write, false)?;
+                set_cloexec(read, false)?;
+                set_cloexec(write, false)?;
                 Ok(())
             });
         }
@@ -535,11 +549,22 @@ mod imp {
     {
         static USR1_INIT: Once = ONCE_INIT;
         let mut err = None;
+
         USR1_INIT.call_once(|| unsafe {
-            let mut new: syscall::SigAction = mem::zeroed();
-            new.sa_handler = sigusr1_handler;
-            new.sa_flags =syscall::SA_SIGINFO as _;
-            err = cvt(syscall::sigaction(syscall::SIGUSR1, Some(&new), None)).err();
+            let mut new: sigaction = mem::zeroed();
+            new.sa_flags = SA_SIGINFO as _;
+            #[cfg(not(target_os = "redox"))]
+            {
+                new.sa_sigaction = sigusr1_handler as usize;
+                if libc::sigaction(libc::SIGUSR1, &new, ptr::null_mut()) != 0 {
+                    err = Some(io::Error::last_os_error());
+                }
+            }
+            #[cfg(target_os = "redox")]
+            {
+                new.sa_handler = sigusr1_handler;
+                err = cvt(syscall::sigaction(syscall::SIGUSR1, Some(&new), None)).err();
+            }
         });
 
         if let Some(e) = err.take() {
@@ -589,12 +614,29 @@ mod imp {
                     // return an error, but on other platforms it may not. In
                     // that sense we don't actually know if this will succeed or
                     // not!
-                    syscall::kill(self.thread.as_pthread_t(), syscall::SIGUSR1);
-                    match self.rx_done.recv() {
-                        Ok(()) |
-                        Err(_) => {
-                            done = true;
-                            break
+                    #[cfg(not(target_os = "redox"))]
+                    {
+                        use std::os::unix::thread::JoinHandleExt;
+                        use std::sync::mpsc::RecvTimeoutError;
+                        libc::pthread_kill(self.thread.as_pthread_t(), libc::SIGUSR1);
+                        match self.rx_done.recv_timeout(dur) {
+                            Ok(()) |
+                            Err(RecvTimeoutError::Disconnected) => {
+                                done = true;
+                                break
+                            }
+                            Err(RecvTimeoutError::Timeout) => {}
+                        }
+                    }
+                    #[cfg(target_os = "redox")]
+                    {
+                        syscall::kill(self.thread.as_pthread_t(), syscall::SIGUSR1);
+                        match self.rx_done.recv() {
+                            Ok(()) |
+                            Err(_) => {
+                                done = true;
+                                break
+                            }
                         }
                     }
                 }
@@ -626,19 +668,19 @@ mod imp {
     }
     */
 
-    fn set_cloexec(fd: usize, set: bool) -> io::Result<()> {
+    fn set_cloexec(fd: RawFd, set: bool) -> io::Result<()> {
         unsafe {
-            let previous = cvt(syscall::fcntl(fd, syscall::F_GETFL, 0))?;
+            let previous = cvt(fcntl(fd, F_GETFD, 0))?;
             let new = if set {
-                previous | syscall::O_CLOEXEC
+                previous | O_CLOEXEC
             } else {
-                previous & !syscall::O_CLOEXEC
+                previous & !O_CLOEXEC
             };
             if new != previous {
-                cvt(syscall::fcntl(fd, syscall::F_SETFL, new))?;
+                cvt(fcntl(fd, F_SETFD, new))?;
             }
-        }
             Ok(())
+        }
     }
 
     #[cfg(not(target_os = "redox"))]
@@ -651,11 +693,12 @@ mod imp {
     }
 
     #[cfg(target_os = "redox")]
-    fn cvt(t: syscall::Result<usize>) -> io::Result<c_int> {
+    fn cvt(t: syscall::Result<usize>) -> io::Result<usize> {
         t.map_err(|err| io::Error::from_raw_os_error(err.errno))
+    }
 
+    #[cfg(not(target_os = "redox"))]
     unsafe fn pipe2() -> Option<&'static fn(*mut c_int, c_int) -> c_int> {
-        /*
         static PIPE2: AtomicUsize = ATOMIC_USIZE_INIT;
 
         if PIPE2.load(Ordering::SeqCst) == 0 {
@@ -671,8 +714,11 @@ mod imp {
         } else {
             mem::transmute(&PIPE2)
         }
-        */
-        None
+    }
+
+    #[cfg(target_os = "redox")]
+    unsafe fn pipe(fds: &mut [usize; 2]) -> syscall::Result<usize> {
+        syscall::pipe2(fds, 0)
     }
 
     extern fn sigusr1_handler(_signum: usize) {
