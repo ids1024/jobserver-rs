@@ -389,7 +389,7 @@ mod imp {
     extern crate syscall;
 
     #[cfg(not(target_os = "redox"))]
-    use self::libc::{fcntl, O_CLOEXEC, F_SETFD, F_GETFD, SA_SIGINFO, sigaction, pipe};
+    use self::libc::{fcntl, O_CLOEXEC, F_SETFD, F_GETFD, SA_SIGINFO, sigaction};
     #[cfg(target_os = "redox")]
     use self::syscall::{fcntl, O_CLOEXEC, F_SETFD, F_GETFD, SA_SIGINFO, SigAction as sigaction};
 
@@ -429,33 +429,28 @@ mod imp {
             Ok(client)
         }
 
+        #[cfg(not(target_os = "redox"))]
         unsafe fn mk() -> io::Result<Client> {
             let mut pipes = [0; 2];
 
             // Attempt atomically-create-with-cloexec if we can
-            #[cfg(target_os = "linux")]
-            {
+            if cfg!(target_os = "linux") {
                 if let Some(pipe2) = pipe2() {
-                    cvt(pipe2(pipes.as_mut_ptr(), O_CLOEXEC))?;
-                    return Ok(Client::from_fds(pipes[0], pipes[1]));
+                    cvt(pipe2(pipes.as_mut_ptr(), libc::O_CLOEXEC))?;
+                    return Ok(Client::from_fds(pipes[0], pipes[1]))
                 }
             }
-            #[cfg(target_os = "redox")]
-            {
-                cvt(syscall::pipe2(&mut pipes, O_CLOEXEC))?;
-                return Ok(Client::from_fds(pipes[0], pipes[1]));
-            }
 
-            #[cfg(target_os = "redox")]
-            {
-                cvt(pipe(&mut pipes))?;
-            }
-            #[cfg(not(target_os = "redox"))]
-            {
-                cvt(pipe(pipes.as_mut_ptr()))?;
-            }
+            cvt(libc::pipe(pipes.as_mut_ptr()))?;
             drop(set_cloexec(pipes[0], true));
             drop(set_cloexec(pipes[1], true));
+            Ok(Client::from_fds(pipes[0], pipes[1]))
+        }
+
+        #[cfg(target_os = "redox")]
+        unsafe fn mk() -> io::Result<Client> {
+            let mut pipes = [0; 2];
+            cvt(syscall::pipe2(&mut pipes, O_CLOEXEC))?;
             Ok(Client::from_fds(pipes[0], pipes[1]))
         }
 
@@ -714,11 +709,6 @@ mod imp {
         } else {
             mem::transmute(&PIPE2)
         }
-    }
-
-    #[cfg(target_os = "redox")]
-    unsafe fn pipe(fds: &mut [usize; 2]) -> syscall::Result<usize> {
-        syscall::pipe2(fds, 0)
     }
 
     #[cfg(target_os = "redox")]
