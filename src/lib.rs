@@ -389,9 +389,9 @@ mod imp {
     extern crate syscall;
 
     #[cfg(not(target_os = "redox"))]
-    use self::libc::{fcntl, O_CLOEXEC, F_SETFD, F_GETFD, SA_SIGINFO, sigaction};
+    use self::libc::{fcntl, FD_CLOEXEC, F_SETFD, F_GETFD, SA_SIGINFO, sigaction};
     #[cfg(target_os = "redox")]
-    use self::syscall::{fcntl, O_CLOEXEC, F_SETFD, F_GETFD, SA_SIGINFO, SigAction as sigaction};
+    use self::syscall::{fcntl, O_CLOEXEC as FD_CLOEXEC, F_SETFD, F_GETFD, SA_SIGINFO, SigAction as sigaction};
 
     use std::fs::File;
     use std::io::{self, Read, Write};
@@ -667,9 +667,9 @@ mod imp {
         unsafe {
             let previous = cvt(fcntl(fd, F_GETFD, 0))?;
             let new = if set {
-                previous | O_CLOEXEC
+                previous | FD_CLOEXEC
             } else {
-                previous & !O_CLOEXEC
+                previous & !FD_CLOEXEC
             };
             if new != previous {
                 cvt(fcntl(fd, F_SETFD, new))?;
