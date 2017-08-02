@@ -450,7 +450,7 @@ mod imp {
         #[cfg(target_os = "redox")]
         unsafe fn mk() -> io::Result<Client> {
             let mut pipes = [0; 2];
-            cvt(syscall::pipe2(&mut pipes, O_CLOEXEC))?;
+            cvt(syscall::pipe2(&mut pipes, syscall::O_CLOEXEC))?;
             Ok(Client::from_fds(pipes[0], pipes[1]))
         }
 
